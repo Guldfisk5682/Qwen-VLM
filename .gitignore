@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+Qwen3-0.6B
+clip-vit-base-patch16
+# Only track dataset.py and __init__.py in data/
+data/*
+!data/dataset.py
+!data/__init__.py
+output
+
+# Virtual environments
+.venv
