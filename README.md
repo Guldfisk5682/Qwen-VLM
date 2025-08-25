@@ -9,3 +9,5 @@ only train q & v
 大语言模型
 https://huggingface.co/Qwen/Qwen3-0.6B
 
+clip:
+https://huggingface.co/openai/clip-vit-base-patch16

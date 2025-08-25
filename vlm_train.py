@@ -29,8 +29,8 @@ if __name__ == "__main__":
     print("配置参数...")
     training_args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=4,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
         learning_rate=2e-5,
         num_train_epochs=3,
