@@ -1,6 +1,12 @@
 from torch.utils.data import Dataset
-from datasets import load_dataset, concatenate_datasets, DownloadConfig
+from datasets import (
+    load_dataset,
+    concatenate_datasets,
+    DownloadConfig,
+    Dataset as HFDataset,
+)
 from transformers import AutoTokenizer, AutoProcessor, DataCollatorForSeq2Seq
+from itertools import islice
 import random
 import torch
 import os
@@ -32,16 +38,20 @@ class VLMDataset(Dataset):
         )
 
         def standardize_coco(dataset):
-            return {'captions': dataset['answer']}
-        
+            return {"captions": dataset["answer"]}
+
         def standardize_flickr(dataset):
-            return {'captions': dataset['caption']}
-        
-        coco_standarized=coco_dataset.map(standardize_coco,remove_columns=['question','answer'])
-        flickr_standardized = flickr_dataset.map(standardize_flickr, remove_columns=['caption'])
-        
-        merged_dataset=concatenate_datasets([coco_standarized,flickr_standardized])
-        
+            return {"captions": dataset["caption"]}
+
+        coco_standarized = coco_dataset.map(
+            standardize_coco, remove_columns=["question", "answer"]
+        )
+        flickr_standardized = flickr_dataset.map(
+            standardize_flickr, remove_columns=["caption"]
+        )
+
+        merged_dataset = concatenate_datasets([coco_standarized, flickr_standardized])
+
         # Split the dataset into training and validation sets
         split_dataset = merged_dataset.train_test_split(
             test_size=val_split_ratio, seed=42
@@ -149,7 +159,89 @@ class VLMDataset(Dataset):
             "labels": labels,
         }
 
+class LoRADataset(Dataset):
+    def __init__(
+        self, qwen_path, clip_path, config, split_type="train", val_split_ratio=0.1, sample_size=50000
+    ):
+        super().__init__()
+        print("为 LoRA 微调准备数据集...")
+        print(f"从 liuhaotian/LLaVA-Instruct-150K 中流式采样 {sample_size} 条数据...")
+        streaming_dataset = load_dataset("liuhaotian/LLaVA-Instruct-150K", streaming=True, split="train")
+        subset_stream = islice(streaming_dataset, sample_size)
+        sampled_data = [item for item in list(subset_stream) if 'image' in item and item['image'] is not None]
+        full_dataset = HFDataset.from_list(sampled_data)
+        split_dataset = full_dataset.train_test_split(test_size=val_split_ratio, seed=42)
+        if split_type == "train":
+            self.dataset = split_dataset["train"]
+            print(f"LoRA 训练集大小: {len(self.dataset)}")
+        else:
+            self.dataset = split_dataset["test"]
+            print(f"LoRA 验证集大小: {len(self.dataset)}")
+        self.tokenizer = AutoTokenizer.from_pretrained(qwen_path)
+        self.processor = AutoProcessor.from_pretrained(clip_path)
+        self.config = config
+        self.image_pad_token_id = self.tokenizer.convert_tokens_to_ids("<|image_pad|>")
 
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        item = self.dataset[index]
+
+        image = item["image"]
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        pixel_values = self.processor(images=image, return_tensors="pt")["pixel_values"].squeeze(0)
+
+        conversations = item["conversations"]
+        
+        conversations[0]['value'] = conversations[0]['value'].replace('<image>', '').strip() + '\n<image>'
+        
+        chat_history = []
+        for turn in conversations:
+            role = "user" if turn["from"] == "human" else "assistant"
+            content = turn["value"]
+            if role == 'user':
+                content = content.replace("<image>", "<|image_pad|>" * self.config.image_pad_num)
+            chat_history.append({"role": role, "content": content})
+        
+        # 编码完整的对话历史
+        formatted_prompt = self.tokenizer.apply_chat_template(
+            chat_history, tokenize=False, add_generation_prompt=False,
+        )
+        tokenizer_output = self.tokenizer(
+            formatted_prompt, truncation=True, max_length=1024
+        )
+        input_ids = tokenizer_output["input_ids"]
+        attention_mask = tokenizer_output["attention_mask"]
+
+        labels = [-100] * len(input_ids)
+        
+        # 找到最后一个 assistant 回答的索引
+        assistant_turn_idx = -1
+        for i, turn in enumerate(chat_history):
+            if turn["role"] == "assistant":
+                assistant_turn_idx = i 
+        
+        if assistant_turn_idx != -1:
+            prompt_history = chat_history[:assistant_turn_idx]
+            
+            formatted_prompt_only = self.tokenizer.apply_chat_template(
+                prompt_history, tokenize=False, add_generation_prompt=True,
+            )
+            prompt_ids = self.tokenizer(formatted_prompt_only)["input_ids"]
+            prompt_len = len(prompt_ids)
+
+            # 只对最后一个 assistant 回答的部分计算 loss
+            labels[prompt_len:] = input_ids[prompt_len:]
+
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "pixel_values": pixel_values,
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+        
 class VLMDataCollator(DataCollatorForSeq2Seq):
     def __call__(self, features, return_tensors=None):
         pixel_values = torch.stack(
@@ -161,6 +253,7 @@ class VLMDataCollator(DataCollatorForSeq2Seq):
         batch["pixel_values"] = pixel_values
         return batch
 
-if __name__=="__main__":
-    dataset=VLMDataset(qwen_path,clip_path)
+
+if __name__ == "__main__":
+    dataset = VLMDataset(qwen_path, clip_path)
     print(random.choice(dataset))
