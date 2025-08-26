@@ -1,4 +1,5 @@
 import os
+import torch
 from transformers import Trainer, TrainingArguments, AutoTokenizer
 
 from data.dataset import VLMDataset, VLMDataCollator
@@ -10,7 +11,8 @@ clip_path = os.path.join(base_path, "clip-vit-base-patch16")
 output_dir = os.path.join(base_path, "output")
 
 if __name__ == "__main__":
-    config = VLMConfig(qwen_path=qwen_path, clip_path=clip_path)
+    TRAINING_TYPE=torch.bfloat16
+    config = VLMConfig(qwen_path=qwen_path, clip_path=clip_path,torch_dtype=TRAINING_TYPE)
     model = VLM(config).cuda()
     tokenizer = AutoTokenizer.from_pretrained(qwen_path)
 

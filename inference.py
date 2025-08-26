@@ -9,7 +9,7 @@ from model import VLM, VLMConfig
 
 
 base_path = os.path.dirname(os.path.abspath(__file__))
-state_path = os.path.join(base_path, "output", "best_model")
+state_path = os.path.join(base_path, "output", "final_best_model")
 qwen_path = os.path.join(base_path, "Qwen3-0.6B")
 clip_path = os.path.join(base_path, "clip-vit-base-patch16")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

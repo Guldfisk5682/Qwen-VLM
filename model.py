@@ -47,10 +47,14 @@ class VLM(PreTrainedModel):
             config.clip_path, torch_dtype=config.torch_dtype
         )
         self.dense1 = nn.Linear(
-            self.clip.config.vision_config.hidden_size * 4, self.qwen.config.hidden_size
+            self.clip.config.vision_config.hidden_size * 4,
+            self.qwen.config.hidden_size,
+            dtype=config.torch_dtype,
         )
         self.dense2 = nn.Linear(
-            self.qwen.config.hidden_size, self.qwen.config.hidden_size
+            self.qwen.config.hidden_size,
+            self.qwen.config.hidden_size,
+            dtype=config.torch_dtype,
         )
         self.image_pad_num = config.image_pad_num
         self.image_pad_id = self.tokenizer.convert_tokens_to_ids("<|image_pad|>")
