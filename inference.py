@@ -9,7 +9,7 @@ from model import VLM, VLMConfig
 
 
 base_path = os.path.dirname(os.path.abspath(__file__))
-state_path = os.path.join(base_path, "output", "checkpoint")
+state_path = os.path.join(base_path, "output", "best_model")
 qwen_path = os.path.join(base_path, "Qwen3-0.6B")
 clip_path = os.path.join(base_path, "clip-vit-base-patch16")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,7 +29,7 @@ else:
 model.load_state_dict(state_dict, strict=False)
 model.eval()
 
-tokenizer = AutoTokenizer.from_pretrained(state_path)
+tokenizer = AutoTokenizer.from_pretrained(qwen_path)
 processor = AutoProcessor.from_pretrained(clip_path)
 
 print("模型加载完成")
@@ -38,6 +38,8 @@ print("模型加载完成")
 def generate_response(model, tokenizer, device):
     while True:
         usr_input = input("输入图片路径：")
+        if usr_input.strip() == "":
+            print("无图片输入")
         image_path = os.path.join(base_path, usr_input)
         if not os.path.exists(image_path):
             print("图片路径不存在或格式错误")
@@ -49,11 +51,12 @@ def generate_response(model, tokenizer, device):
         elif prompt.lower() == "exit":
             print("退出程序")
             break
-
-        image = Image.open(image_path).convert("RGB")
-        pixel_values = processor(images=image, return_tensors="pt").pixel_values.to(
-            device
-        )
+        
+        if not usr_input.strip() == "":
+            image = Image.open(image_path).convert("RGB")
+            pixel_values = processor(images=image, return_tensors="pt").pixel_values.to(
+                device
+            )
 
         if "<image>" not in prompt:
             prompt += "\n<image>"
@@ -74,14 +77,17 @@ def generate_response(model, tokenizer, device):
 
         # 和forward中一个步骤
         text_embeds = model.qwen.get_input_embeddings()(input_ids)
-        image_embeds = model.clip.vision_model(pixel_values).last_hidden_state[:, 1:, :]
-        b, s, d = image_embeds.shape
-        image_embeds = image_embeds.view(b, -1, 4 * d)
-        image_features = model.dense2(F.silu(model.dense1(image_embeds)))
-        text_embeds = text_embeds.to(image_features.dtype)
-        inputs_embeds = model.merge_text_and_image(
-            input_ids, text_embeds, image_features
-        )
+        if not usr_input.strip() == "":
+            image_embeds = model.clip.vision_model(pixel_values).last_hidden_state[:, 1:, :]
+            b, s, d = image_embeds.shape
+            image_embeds = image_embeds.view(b, -1, 4 * d)
+            image_features = model.dense2(F.silu(model.dense1(image_embeds)))
+            text_embeds = text_embeds.to(image_features.dtype)
+            inputs_embeds = model.merge_text_and_image(
+                input_ids, text_embeds, image_features
+            )
+        else:
+            inputs_embeds = text_embeds
 
         # text_prompt = tokenizer.apply_chat_template(
         #     [{"role": "user", "content": "你好，请做个自我介绍"}],
@@ -119,9 +125,9 @@ def generate_response(model, tokenizer, device):
 
         response_ids = generation_output[:, input_ids.shape[1]:]
         
-        print("--- [DEBUG] Raw Generated Token IDs ---")
-        print(response_ids)
-        print("-----------------------------------")
+        # print("--- [DEBUG] Raw Generated Token IDs ---")
+        # print(response_ids)
+        # print("-----------------------------------")
 
         print("--- [DEBUG] Raw Decoded Output ---")
         response_raw = tokenizer.decode(response_ids[0], skip_special_tokens=False)

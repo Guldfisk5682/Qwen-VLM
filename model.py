@@ -1,5 +1,3 @@
-from pydoc import text
-from matplotlib.pylab import logistic
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -27,6 +25,7 @@ class VLMConfig(PretrainedConfig):
         clip_path=clip_path,
         image_pad_num=49,
         qwen_frozen=True,
+        torch_dtype=torch.bfloat16,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -34,14 +33,19 @@ class VLMConfig(PretrainedConfig):
         self.clip_path = clip_path
         self.image_pad_num = image_pad_num  # (224/16)**2 = 196 patches  //4 = 49 tokens
         self.qwen_frozen = qwen_frozen
+        self.torch_dtype = torch_dtype
 
 
 class VLM(PreTrainedModel):
     def __init__(self, config: VLMConfig):
         super().__init__(config)
-        self.qwen = AutoModelForCausalLM.from_pretrained(config.qwen_path)
+        self.qwen = AutoModelForCausalLM.from_pretrained(
+            config.qwen_path, torch_dtype=config.torch_dtype
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(config.qwen_path)
-        self.clip = AutoModel.from_pretrained(config.clip_path)
+        self.clip = AutoModel.from_pretrained(
+            config.clip_path, torch_dtype=config.torch_dtype
+        )
         self.dense1 = nn.Linear(
             self.clip.config.vision_config.hidden_size * 4, self.qwen.config.hidden_size
         )
@@ -60,7 +64,9 @@ class VLM(PreTrainedModel):
 
     def forward(self, input_ids, labels, pixel_values, attention_mask=None):
         text_embeds = self.qwen.get_input_embeddings()(input_ids)
-        image_embeds = self.clip.vision_model(pixel_values).last_hidden_state[:,1:,:]  # 去掉cls token
+        image_embeds = self.clip.vision_model(pixel_values).last_hidden_state[
+            :, 1:, :
+        ]  # 去掉cls token
         b, s, d = image_embeds.shape
         image_embeds = image_embeds.view(b, -1, 4 * d)  # (b, 49, 768 * 4)
 
@@ -68,7 +74,9 @@ class VLM(PreTrainedModel):
         text_embeds = text_embeds.to(image_features.dtype)
 
         text_embeds = self.merge_text_and_image(input_ids, text_embeds, image_features)
-        qwen_outputs = self.qwen(inputs_embeds=text_embeds, attention_mask=attention_mask)
+        qwen_outputs = self.qwen(
+            inputs_embeds=text_embeds, attention_mask=attention_mask
+        )
         logits = qwen_outputs.logits
 
         loss = None
@@ -92,5 +100,7 @@ class VLM(PreTrainedModel):
 if __name__ == "__main__":
     config = VLMConfig()
     vision_language_model = VLM(config)
-    params=sum(p.numel() for p in vision_language_model.parameters() if p.requires_grad)
+    params = sum(
+        p.numel() for p in vision_language_model.parameters() if p.requires_grad
+    )
     print(f"Trainable params: {params/1e6}M")
